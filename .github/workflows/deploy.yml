@@ -1,0 +1,63 @@
+name: Daily Build and Deploy
+
+on:
+  schedule:
+    # 北京时间每天20:00 = UTC 12:00
+    - cron: "0 12 * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install boto3 python-dotenv
+
+      - name: Collect daily content
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          GIT_AUTHOR_NAME: "Hermes Agent"
+          GIT_AUTHOR_EMAIL: "hermes@210608.xyz"
+          GIT_COMMITTER_NAME: "Hermes Agent"
+          GIT_COMMITTER_EMAIL: "hermes@210608.xyz"
+        run: |
+          # 收集内容（图片+音乐+新闻），上传R2，输出JSON
+          python3 scripts/collect_daily.py
+
+          # 如果有变更，提交
+          git config --global user.email "hermes@210608.xyz"
+          git config --global user.name "Hermes Agent"
+          git add data/
+          git diff --cached --quiet || git commit -m "chore: update daily content $(date +%Y-%m-%d)"
+          git push origin main || echo "No new content to commit"
+
+      - name: Build static site
+        run: python3 build.py
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          account-id: ${{ secrets.R2_ACCOUNT_ID }}
+          project-name: 210608-xyz
+          directory: dist
+          git-hash: ${{ github.sha }}
